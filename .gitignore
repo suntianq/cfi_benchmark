@@ -12,16 +12,7 @@
 *.bin
 *.exe
 
-# ===== Trace 采集与还原产物 =====
-/traces/
-perf.data
-perf.data.*
-*.perf
-*.pt
-*.etm
-*.raw
-
-# ===== 运行时产物 =====
+# ===== 运行时产物（EXP 验证用）=====
 core
 core.*
 vgcore.*
