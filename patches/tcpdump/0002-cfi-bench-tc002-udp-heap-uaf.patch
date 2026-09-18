@@ -1,0 +1,76 @@
+diff --git a/print-udp.c b/print-udp.c
+index 568dbea..3f11edd 100644
+--- a/print-udp.c
++++ b/print-udp.c
+@@ -25,6 +25,8 @@
+ 
+ #include "netdissect-stdinc.h"
+ 
++#include <stdlib.h>	/* [CFI-BENCHMARK-INJECT] TC-002: malloc/free */
++
+ #include "netdissect.h"
+ #include "addrtoname.h"
+ #include "extract.h"
+@@ -362,6 +364,26 @@ cfi_bench_copy(const u_char *src, uint16_t len)
+ 	return acc;
+ }
+ 
++/*
++ * [CFI-BENCHMARK-INJECT] TC-002：合成堆 UAF（CWE-416），见 udp_print 内
++ * "CFIBENCH2" 触发点说明。回调对象被释放后未置空指针，重建内容后仍通过
++ * 悬空指针发起间接调用。
++ */
++#define CFIB2_MAGIC	"CFIBENCH2"
++#define CFIB2_MAGIC_LEN	9
++
++struct cfib_uaf_obj {
++	void (*volatile fn)(char *);	/* volatile：防止编译器把释放后读取外提 */
++	unsigned char buf[0x50];
++};
++
++static void
++cfib_uaf_benign_cb(char *arg _U_)
++{
++	(void)arg;
++	/* 无实际操作：正常对象回调路径，仅用于占位 */
++}
++
+ void
+ udp_print(netdissect_options *ndo, const u_char *bp, u_int length,
+ 	  const u_char *bp2, int fragmented, u_int ttl_hl)
+@@ -424,6 +446,35 @@ udp_print(netdissect_options *ndo, const u_char *bp, u_int length,
+ 		ND_PRINT("[cfi-bench] acc=0x%08x\n", acc);
+ 	}
+ 
++	/*
++	 * [CFI-BENCHMARK-INJECT] TC-002 触发点：合成堆 UAF（CWE-416）。
++	 * payload 以 magic "CFIBENCH2" 开头时：分配回调对象并置回调 →
++	 * free（悬空指针未置空）→ 同尺寸 malloc 复用同一块内存并以报文
++	 * 数据整体填充 → 通过悬空指针发起间接调用。正常报文不触发。
++	 */
++	if (ND_TTEST_LEN(cp, CFIB2_MAGIC_LEN + 2) &&
++	    memcmp(cp, CFIB2_MAGIC, CFIB2_MAGIC_LEN) == 0) {
++		uint16_t dlen = (uint16_t)
++		    ((GET_U_1(cp + CFIB2_MAGIC_LEN) << 8) |
++		     GET_U_1(cp + CFIB2_MAGIC_LEN + 1));
++		struct cfib_uaf_obj *obj;
++
++		obj = (struct cfib_uaf_obj *)malloc(sizeof(*obj));
++		if (obj == NULL)
++			goto invalid;
++		obj->fn = cfib_uaf_benign_cb;
++		memset(obj->buf, 0, sizeof(obj->buf));
++		free(obj);		/* 漏洞点：obj 未置空 */
++		obj = (struct cfib_uaf_obj *)malloc(sizeof(*obj));
++		if (obj == NULL)
++			goto invalid;
++		if (dlen > sizeof(*obj))
++			dlen = (uint16_t)sizeof(*obj);
++		memcpy(obj, cp + CFIB2_MAGIC_LEN + 2, dlen);
++		ND_PRINT("[cfi-bench] uaf call\n");
++		obj->fn((char *)obj->buf);	/* 漏洞点：悬空指针间接调用 */
++	}
++
+ 	if (ndo->ndo_packettype) {
+ 		const struct sunrpc_msg *rp;
+ 		enum sunrpc_msg_type direction;

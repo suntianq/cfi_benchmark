@@ -1,0 +1,76 @@
+{
+  "sample_id": "tcpdump-TC002",
+  "label_version": 1,
+  "date": "2026-09-18",
+  "status": "verified",
+  "target": {
+    "software": "tcpdump",
+    "upstream": "https://github.com/the-tcpdump-group/tcpdump.git",
+    "commit": "199172821ffc1c9d7982a172d67dd8058591a57e",
+    "version_str": "5.0.0-PRE-GIT",
+    "libpcap": "1.10.5 (tarball sha256 37ced90a19a302a7f32e458224a00c365c117905c2cd35ac544b6880a81488f0)",
+    "build_script": "targets/tcpdump/build.sh tc002",
+    "patch": [
+      "patches/tcpdump/0001-cfi-bench-tc001-udp-stack-overflow.patch",
+      "patches/tcpdump/0002-cfi-bench-tc002-udp-heap-uaf.patch"
+    ],
+    "note": "tc002 二进制同时包含 TC-001 与 TC-002 两个漏洞（patch 叠加）",
+    "elf": {
+      "build_path": "build/tcpdump-cfi-bench/out/tcpdump-tc002",
+      "sha256": "7049df068f99a492f5a11c6ba9106453ed1da132296d30dd2fb0a059088cf54d",
+      "reproducible": true
+    },
+    "mitigations": {
+      "pie": false,
+      "canary": false,
+      "fortify_source": false,
+      "nx": true,
+      "relro": "full"
+    },
+    "toolchain": {
+      "gcc": "13.3.0 (Ubuntu 13.3.0-6ubuntu2~24.04.1)",
+      "glibc": "2.39-0ubuntu8.9",
+      "os": "Ubuntu 24.04.1 (WSL2, kernel 6.18.33.2-microsoft-standard-WSL2)"
+    }
+  },
+  "vulnerability": {
+    "type": "heap use-after-free, indirect call hijack (synthetic, injected)",
+    "cwe": "CWE-416",
+    "location": "print-udp.c: udp_print() 中 \"CFIBENCH2\" 触发点，对象类型 struct cfib_uaf_obj",
+    "trigger": {
+      "condition": "UDP payload 以 magic \"CFIBENCH2\" 开头（仅此条件触发，正常报文不受影响）",
+      "payload_layout": "payload[0:9]=magic, payload[9:11]=dlen(BE16), payload[11:]=对象重建数据(整体填充 obj, dlen 上限 0x58)",
+      "uaf_sequence": "malloc(0x58) 置回调 → free(指针未置空) → malloc(0x58)（tcache LIFO 复用同块）→ memcpy 报文数据 → 悬空指针间接调用 obj->fn(obj->buf)"
+    },
+    "primitive": "RIP 完全受控的间接 CALL（rdi=obj->buf=攻击者字符串），与 TC-001 的非法 RET 形成对照"
+  },
+  "exploit": {
+    "files": [
+      "exploits/tcpdump/exp_tcpdump_tc002.py",
+      "exploits/tcpdump/gen_poc.py"
+    ],
+    "technique": "无 ROP 链：fn 覆写为 libc system，buf 为参数字符串（/bin/sh 或 <cmd>），单次间接调用完成 getshell",
+    "success_criteria": "getshell；--mode shell 交互 / --mode cmd 非交互（命令输出 + CFI_DONE_exit=0）",
+    "requirements": "pwntools==4.15.0（见 tools/requirements.txt）",
+    "final_poc_note": "poc_uaf.pcap 由 EXP 运行时生成（内嵌 libc 地址，机器相关），不入库"
+  },
+  "runtime_env": {
+    "aslr": "per-process disabled via setarch -R（禁止用 pwntools aslr=False：其布局与 setarch -R 不一致）",
+    "user": "non-root（tcpdump 不发生 -Z 降权）",
+    "libc": "/usr/lib/x86_64-linux-gnu/libc.so.6，setarch -R 下基址 0x7ffff7600000",
+    "note": "libc 基址由 EXP 从存活进程 /proc/<pid>/maps 动态解析，不硬编码"
+  },
+  "verification": {
+    "exploit": "--mode cmd 与 --mode shell 双模式 SUCCESS（uid 输出 / CFI_PWNED_42）",
+    "normal_corpus": "20 个正常 pcap（seed=42）对 tc002 二进制全部无触发、正常退出",
+    "coexistence": "TC-001 漏洞在 tc002 二进制上仍可触发（poc_pattern.pcap → segfault，rc=139）",
+    "regression": "TC-001 EXP 对 tcpdump-tc001 回归通过"
+  },
+  "capture_side_notes": {
+    "run_cmd": "tcpdump -nn -r <poc_uaf.pcap>",
+    "attack_window": "udp_print → [cfi-bench] uaf call 标记 → 悬空指针间接调用 → libc system → execve",
+    "markers": "stdout 出现 \"[cfi-bench] uaf call\" 即触发；攻击结束判据可用 execve(\"/bin/sh\") 或命令输出",
+    "elf_binding": "采集侧符号还原必须使用上表 sha256 的 ELF（注意 tc001/tc002 是不同 ELF，按样本使用）",
+    "aslr_note": "采集时必须使用 setarch -R（或等价 personality）关闭 ASLR 并记入 trace 元数据；不要用 pwntools aslr=False（布局不同）"
+  }
+}

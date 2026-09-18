@@ -12,7 +12,7 @@
     "build_script": "targets/tcpdump/build.sh",
     "patch": "patches/tcpdump/0001-cfi-bench-tc001-udp-stack-overflow.patch",
     "elf": {
-      "build_path": "build/tcpdump-cfi-bench/out/tcpdump",
+      "build_path": "build/tcpdump-cfi-bench/out/tcpdump-tc001",
       "sha256": "0853f0e448fd17b05edb6f7894457aefc7ba3131955f776f5703541f448cfa22",
       "build_id": "2624f34d853442735608a9dd5966814a0c9af381",
       "reproducible": true

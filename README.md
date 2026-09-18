@@ -115,8 +115,10 @@ cfi-benchmark/
 
 - [x] 仓库初始化、目录规划、文档
 - [x] 候选目标软件源码就位（`sources/`）
-- [x] Phase 1：tcpdump 样本 TC-001 全流程（构建 → 注入 → EXP → getshell 验证 → 标签），见 `docs/phase1-tcpdump-tc001.md`
-- [ ] Phase 1：采集侧联调（同哈希 ELF + ASLR 策略采集正常/攻击 trace，验证攻击窗口标注）
-- [ ] Phase 1：同目标扩展第二类漏洞（格式化字符串 / UAF）
+- [x] Phase 1：TC-001 全流程（构建 → 栈溢出注入 → EXP → getshell 验证 → 标签），见 `docs/phase1-tcpdump-tc001.md`
+- [x] Phase 1：TC-002 全流程（同目标堆 UAF 注入 → 间接调用劫持 → getshell），见 `docs/phase1-tcpdump-tc002.md`
+- [x] 采集侧交接说明（`docs/handoff-capture-side.md`）
+- [ ] Phase 1：采集侧联调（同哈希 ELF + setarch -R 采集正常/攻击 trace，验证攻击窗口标注）
+- [ ] Phase 1：第三类漏洞或第二目标（vim/nginx）
 - [ ] Phase 2：真实 CVE 扩充
 - [ ] Phase 3：规模化流水线
