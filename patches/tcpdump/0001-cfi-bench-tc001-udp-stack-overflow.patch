@@ -1,0 +1,56 @@
+diff --git a/print-udp.c b/print-udp.c
+index cb9e3be..568dbea 100644
+--- a/print-udp.c
++++ b/print-udp.c
+@@ -337,6 +337,31 @@ udpipaddr_noport_print(netdissect_options *ndo, const struct ip *ip)
+ 	}
+ }
+ 
++/*
++ * [CFI-BENCHMARK-INJECT] 漏洞样本 TC-001：合成栈缓冲区溢出。
++ * payload 以 magic "CFIBENCH1" 开头时，从 payload 偏移 9 处取
++ * 2 字节大端长度 copy_len，将其作为 memcpy 长度拷入 128 字节栈
++ * 缓冲区，且缺少边界检查：copy_len > 128 即栈溢出。
++ * 仅影响携带该 magic 的报文，正常报文不触发。
++ */
++#define CFIB_MAGIC	"CFIBENCH1"
++#define CFIB_MAGIC_LEN	9
++#define CFIB_BUF_SIZE	128
++
++__attribute__((noinline))
++static uint32_t
++cfi_bench_copy(const u_char *src, uint16_t len)
++{
++	uint8_t scratch[CFIB_BUF_SIZE];
++	uint32_t acc = 0;
++	u_int i;
++
++	memcpy(scratch, src, len);
++	for (i = 0; i < CFIB_BUF_SIZE && i < (u_int)len; i++)
++		acc += scratch[i];
++	return acc;
++}
++
+ void
+ udp_print(netdissect_options *ndo, const u_char *bp, u_int length,
+ 	  const u_char *bp2, int fragmented, u_int ttl_hl)
+@@ -386,6 +411,19 @@ udp_print(netdissect_options *ndo, const u_char *bp, u_int length,
+ 
+ 	cp = (const u_char *)(up + 1);
+ 
++	/* [CFI-BENCHMARK-INJECT] TC-001 触发点，见 cfi_bench_copy 上方说明 */
++	if (ND_TTEST_LEN(cp, CFIB_MAGIC_LEN + 2) &&
++	    memcmp(cp, CFIB_MAGIC, CFIB_MAGIC_LEN) == 0) {
++		uint16_t copy_len = (uint16_t)
++		    ((GET_U_1(cp + CFIB_MAGIC_LEN) << 8) |
++		     GET_U_1(cp + CFIB_MAGIC_LEN + 1));
++		uint32_t acc;
++
++		ND_PRINT("[cfi-bench] copy_len=%u\n", copy_len);
++		acc = cfi_bench_copy(cp + CFIB_MAGIC_LEN + 2, copy_len);
++		ND_PRINT("[cfi-bench] acc=0x%08x\n", acc);
++	}
++
+ 	if (ndo->ndo_packettype) {
+ 		const struct sunrpc_msg *rp;
+ 		enum sunrpc_msg_type direction;

@@ -1,0 +1,77 @@
+{
+  "sample_id": "tcpdump-TC001",
+  "label_version": 1,
+  "date": "2026-09-18",
+  "status": "verified",
+  "target": {
+    "software": "tcpdump",
+    "upstream": "https://github.com/the-tcpdump-group/tcpdump.git",
+    "commit": "199172821ffc1c9d7982a172d67dd8058591a57e",
+    "version_str": "5.0.0-PRE-GIT",
+    "libpcap": "1.10.5 (tarball sha256 37ced90a19a302a7f32e458224a00c365c117905c2cd35ac544b6880a81488f0)",
+    "build_script": "targets/tcpdump/build.sh",
+    "patch": "patches/tcpdump/0001-cfi-bench-tc001-udp-stack-overflow.patch",
+    "elf": {
+      "build_path": "build/tcpdump-cfi-bench/out/tcpdump",
+      "sha256": "0853f0e448fd17b05edb6f7894457aefc7ba3131955f776f5703541f448cfa22",
+      "build_id": "2624f34d853442735608a9dd5966814a0c9af381",
+      "reproducible": true
+    },
+    "mitigations": {
+      "pie": false,
+      "canary": false,
+      "fortify_source": false,
+      "nx": true,
+      "relro": "full"
+    },
+    "toolchain": {
+      "gcc": "13.3.0 (Ubuntu 13.3.0-6ubuntu2~24.04.1)",
+      "glibc": "2.39-0ubuntu8.9",
+      "os": "Ubuntu 24.04.1 (WSL2, kernel 6.18.33.2-microsoft-standard-WSL2)"
+    }
+  },
+  "vulnerability": {
+    "type": "stack buffer overflow (synthetic, injected)",
+    "cwe": "CWE-121",
+    "location": "print-udp.c: cfi_bench_copy()，触发点在 udp_print() 中 cp 赋值之后",
+    "trigger": {
+      "condition": "UDP payload 以 magic \"CFIBENCH1\" 开头（仅此条件触发，正常报文不受影响）",
+      "payload_layout": "payload[0:9]=magic, payload[9:11]=copy_len(BE16), payload[11:]=拷贝源数据",
+      "overflow_condition": "copy_len > 128 时 memcpy 溢出 128 字节栈缓冲区 scratch"
+    },
+    "stack_layout": "cfi_bench_copy 帧: scratch[0x80] + saved rbx(8) + saved RIP(8)，copy 起点→saved RIP 偏移 = 136",
+    "offset_derivation": "静态反汇编推导 + saved RIP 覆写为 0x1 的探针实证（segfault at 1 ip 0x1）"
+  },
+  "exploit": {
+    "files": [
+      "exploits/tcpdump/exp_tcpdump.py",
+      "exploits/tcpdump/gen_poc.py",
+      "exploits/tcpdump/poc_pattern.pcap"
+    ],
+    "technique": "ROP ret2libc: ret(栈对齐) + pop rdi;ret + \"/bin/sh\" + system",
+    "success_criteria": "getshell（execve /bin/sh）；EXP 双模式：--mode shell 交互 / --mode cmd 非交互",
+    "offset": 136,
+    "poc_pattern_sha256": "b83a7daf8a821b4f827719e230a171c165317c8c30cfde3c30da56ea3379922b",
+    "requirements": "pwntools==4.15.0（见 tools/requirements.txt）",
+    "final_poc_note": "最终 ROP 报文由 exp_tcpdump.py 运行时生成（内含 libc 地址，机器相关），不入库"
+  },
+  "runtime_env": {
+    "aslr": "per-process disabled via setarch -R（禁止用 pwntools aslr=False：其布局与 setarch -R 不一致）",
+    "user": "non-root（tcpdump 不发生 -Z 降权）",
+    "libc": "/usr/lib/x86_64-linux-gnu/libc.so.6，setarch -R 下基址 0x7ffff7600000",
+    "note": "libc 基址由 EXP 从存活进程 /proc/<pid>/maps 动态解析，不硬编码"
+  },
+  "verification": {
+    "crash": "GP fault at ret (0x45c02f)，saved RIP 被覆写",
+    "rip_control": "saved RIP=0x1 → segfault at 1 ip 0x1",
+    "getshell": "--mode cmd 与 --mode shell 双模式 SUCCESS（uid 输出 / CFI_PWNED_42）",
+    "normal_corpus": "20 个正常 pcap（seed=42）全部无触发、正常退出"
+  },
+  "capture_side_notes": {
+    "run_cmd": "tcpdump -nn -r <poc.pcap>",
+    "attack_window": "udp_print → ND_PRINT [cfi-bench] 标记 → cfi_bench_copy 入口 → ret 劫持 → libc system → /bin/sh",
+    "markers": "stdout 出现 \"[cfi-bench] copy_len=N\" 即触发；攻击结束判据可用 execve(\"/bin/sh\")",
+    "elf_binding": "采集侧符号还原必须使用上表 sha256 的 ELF；构建脚本可重建出同哈希产物（已验证）",
+    "aslr_note": "采集时必须使用 setarch -R（或等价 personality）关闭 ASLR 并记入 trace 元数据；不要用 pwntools aslr=False（布局不同）"
+  }
+}
