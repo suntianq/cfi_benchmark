@@ -2,6 +2,8 @@
 
 本仓库负责数据集构建（漏洞植入、编译、EXP、本地验证）；PT/ETM 采集、指令流还原、AI 检测在采集侧服务器。本文档是已交付样本的交接与联调指引。元数据见 `labels/tcpdump-tc001.json`、`labels/tcpdump-tc002.json`，实验记录见 `docs/phase1-tcpdump-tc001.md`、`docs/phase1-tcpdump-tc002.md`。
 
+**开箱即跑**：先运行 `python3 tools/capture_session.py`（纯标准库）——它完成预检（ELF 哈希核对 labels、setarch、非 root、pwntools）、正常/攻击 workload 全量验证，并在 `build/capture-sessions/<id>/session.json` 产出会话 manifest 与**逐条 replay 命令清单**（采集侧在其 tracer 下照单执行即可）。窗口切分与标签格式见 `docs/trace-window-spec.md`。
+
 ## 1. 交付物清单
 
 | 项 | TC-001（栈溢出/非法 RET） | TC-002（堆 UAF/非法间接 CALL） |
