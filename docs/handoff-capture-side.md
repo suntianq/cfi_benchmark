@@ -1,23 +1,23 @@
-# 采集侧交接说明（Phase 1：tcpdump TC-001 / TC-002）
+# 采集侧交接说明（Phase 1：tcpdump TC-001/TC-002、vim TC-001）
 
-本仓库负责数据集构建（漏洞植入、编译、EXP、本地验证）；PT/ETM 采集、指令流还原、AI 检测在采集侧服务器。本文档是已交付样本的交接与联调指引。元数据见 `labels/tcpdump-tc001.json`、`labels/tcpdump-tc002.json`，实验记录见 `docs/phase1-tcpdump-tc001.md`、`docs/phase1-tcpdump-tc002.md`。
+本仓库负责数据集构建（漏洞植入、编译、EXP、本地验证）；PT/ETM 采集、指令流还原、AI 检测在采集侧服务器。本文档是已交付样本的交接与联调指引。元数据见 `labels/*.json`，实验记录见 `docs/phase1-*.md`。
 
 **开箱即跑**：先运行 `python3 tools/capture_session.py`（纯标准库）——它完成预检（ELF 哈希核对 labels、setarch、非 root、pwntools）、正常/攻击 workload 全量验证，并在 `build/capture-sessions/<id>/session.json` 产出会话 manifest 与**逐条 replay 命令清单**（采集侧在其 tracer 下照单执行即可）。窗口切分与标签格式见 `docs/trace-window-spec.md`。
 
 ## 1. 交付物清单
 
-| 项 | TC-001（栈溢出/非法 RET） | TC-002（堆 UAF/非法间接 CALL） |
-|---|---|---|
-| ELF（带符号） | `build/tcpdump-cfi-bench/out/tcpdump-tc001` | `build/tcpdump-cfi-bench/out/tcpdump-tc002` |
-| ELF sha256 | `0853f0e448fd17b05edb6f7894457aefc7ba3131955f776f5703541f448cfa22` | `7049df068f99a492f5a11c6ba9106453ed1da132296d30dd2fb0a059088cf54d` |
-| patches | `patches/tcpdump/0001-*.patch` | `0001-*.patch` + `0002-*.patch` |
-| EXP | `exploits/tcpdump/exp_tcpdump.py` | `exploits/tcpdump/exp_tcpdump_tc002.py` |
-| 触发 magic | `CFIBENCH1`（payload 偏移 9 为拷贝长度） | `CFIBENCH2`（payload 偏移 9 为对象重建长度） |
-| stdout 触发标记 | `[cfi-bench] copy_len=N` | `[cfi-bench] uaf call` |
-| 攻击原语 | 非法 RET（ROP ret2libc） | 非法间接 CALL（fn=system） |
-| 正常语料 | `tools/gen_normal_corpus.py`（两样本共用，20 个 pcap，无任何 magic） | 同左 |
+| 项 | tcpdump TC-001（非法 RET） | tcpdump TC-002（非法间接 CALL） | vim TC-001（非法间接 CALL） |
+|---|---|---|---|
+| ELF | `build/tcpdump-cfi-bench/out/tcpdump-tc001` | `build/tcpdump-cfi-bench/out/tcpdump-tc002` | `build/vim-cfi-bench/out/vim-tc001` |
+| ELF sha256 | `0853f0e4...cfa22` | `7049df06...ff169` | `3b872d5a...b52d19` |
+| patches | `patches/tcpdump/0001-*.patch` | tcpdump `0001+0002` | `patches/vim/0001-*.patch` |
+| EXP | `exploits/tcpdump/exp_tcpdump.py` | `exploits/tcpdump/exp_tcpdump_tc002.py` | `exploits/vim/exp_vim_tc001.py` |
+| 触发输入 | pcap，magic `CFIBENCH1` | pcap，magic `CFIBENCH2` | **文本文件**，magic `CFIVIMBEN`（文件头 9 字节） |
+| stdout/stderr 触发标记 | `[cfi-bench] copy_len=N` | `[cfi-bench] uaf call` | `[cfi-bench] uaf trigger dlen=88` + `uaf call`（stderr） |
+| 攻击原语 | 非法 RET（ROP ret2libc） | 非法间接 CALL（fn=system） | 非法间接 CALL（fn=system） |
+| 正常语料 | `tools/gen_normal_corpus.py`（*.pcap，20 个） | 同左 | `tools/gen_normal_corpus_vim.py`（*.txt，20 个） |
 
-其余共享交付物：构建脚本 `targets/tcpdump/build.sh`（用法 `build.sh [tc001|tc002|all]`）、PoC 输入 `exploits/tcpdump/poc_pattern.pcap`、pwntools 版本 `tools/requirements.txt`。
+共享：构建脚本 `targets/{tcpdump,vim}/build.sh`、探针 PoC `exploits/tcpdump/poc_pattern.pcap` 与 `exploits/vim/poc_hijack_probe.bin`、pwntools 版本 `tools/requirements.txt`。各样本 ELF 哈希以 labels/*.json 为准（本表为缩写）。
 
 ## 2. 环境与运行约定（重要）
 
@@ -54,29 +54,39 @@ setarch -R ./build/tcpdump-cfi-bench/out/tcpdump-tc001 -nn -r build/tcpdump-cfi-
 #   手动采集:
 setarch -R ./build/tcpdump-cfi-bench/out/tcpdump-tc002 -nn -r build/tcpdump-cfi-bench/out/poc_uaf.pcap
 
+# TC-003 (vim): 必须设置 VIMRUNTIME 指向源码树 runtime
+export VIMRUNTIME=$PWD/build/vim-cfi-bench/vim-src/runtime
+/home/stq/venvs/cfi_bench/bin/python exploits/vim/exp_vim_tc001.py --mode cmd --cmd id
+#   成功判据: uid=... + CFI_DONE_exit=0，且 preceded by "[cfi-bench] uaf call"（stderr）
+#   手动采集:
+setarch -R ./build/vim-cfi-bench/out/vim-tc001 -es -N -u NONE -i NONE -c 'qall!' build/vim-cfi-bench/out/poc_uaf_file.bin
+
 # 4) 交互 shell 模式（人工验证用）
 /home/stq/venvs/cfi_bench/bin/python exploits/tcpdump/exp_tcpdump.py --offset 136 --mode shell
 /home/stq/venvs/cfi_bench/bin/python exploits/tcpdump/exp_tcpdump_tc002.py --mode shell
+/home/stq/venvs/cfi_bench/bin/python exploits/vim/exp_vim_tc001.py --mode shell
 ```
 
 ## 4. 攻击窗口标注指引
 
-- **触发标记**：TC-001 为 `[cfi-bench] copy_len=N`；TC-002 为 `[cfi-bench] uaf call`。出现即漏洞路径已进入。
+- **触发标记**：tcpdump TC-001 为 `[cfi-bench] copy_len=N`（stdout）；TC-002 为 `[cfi-bench] uaf call`（stdout）；vim TC-001 为 `[cfi-bench] uaf trigger dlen=88` 与 `[cfi-bench] uaf call`（**stderr**）。出现即漏洞路径已进入。
 - **代码路径**：
-  - TC-001：`udp_print`（print-udp.c）→ `cfi_bench_copy`（noinline，符号表可定位）→ `memcpy` 越界 → `ret` 劫持 → libc `system("/bin/sh")`；
-  - TC-002：`udp_print`（"CFIBENCH2" 触发点）→ `free` → tcache 复用 → 悬空指针**间接调用** → libc `system`。
+  - tcpdump TC-001：`udp_print`（print-udp.c）→ `cfi_bench_copy`（noinline）→ `memcpy` 越界 → `ret` 劫持 → libc `system("/bin/sh")`；
+  - tcpdump TC-002：`udp_print`（"CFIBENCH2" 触发点）→ `free` → tcache 复用 → 悬空指针**间接调用** → libc `system`；
+  - vim TC-001：`readfile`（fileio.c）→ `cfiv_uaf_probe/cfiv_uaf_trigger` → 悬空指针**间接调用** → libc `system`。
 - **明确结束判据**：子进程 `execve("/bin/sh")` 或命令执行输出。
-- **无攻击标记的正常样本**：正常语料无 magic，绝不会进入注入代码路径（两样本均验证 20/20 干净）。
-- **两个样本是不同的 ELF**（tc001/tc002），采集与符号还原必须按样本使用对应 ELF。
+- **无攻击标记的正常样本**：正常语料无 magic，绝不会进入注入代码路径（三样本均验证 20/20 干净）。
+- **三个样本是三个不同 ELF**（tcpdump-tc001/tcpdump-tc002/vim-tc001），采集与符号还原必须按样本使用对应 ELF。
 
 ## 5. 采集侧验收清单
 
-- [ ] ELF sha256 与本文件一致（tc001/tc002 分别核对）
+- [ ] ELF sha256 与 labels/*.json 一致（三个 ELF 分别核对）
 - [ ] 正常语料采集：无崩溃、无 `[cfi-bench]` 输出、正常退出（exit 0）
-- [ ] TC-001 攻击采集：`[cfi-bench] copy_len=168` + shell 行为
-- [ ] TC-002 攻击采集：`[cfi-bench] uaf call` + shell 行为
-- [ ] 还原后的指令流：TC-001 覆盖 `udp_print → cfi_bench_copy` 且存在非法 RET；TC-002 覆盖悬空调用点且存在非法间接 CALL（目标均在 libc 段）
-- [ ] 正常/攻击 trace 的窗口切分方案已与 AI 侧确认
+- [ ] tcpdump TC-001 攻击采集：`[cfi-bench] copy_len=168` + shell 行为
+- [ ] tcpdump TC-002 攻击采集：`[cfi-bench] uaf call` + shell 行为
+- [ ] vim TC-001 攻击采集：`[cfi-bench] uaf trigger dlen=88` + shell 行为
+- [ ] 还原后的指令流：非法 RET（TC-001）与非法间接 CALL（TC-002/vim）均落点在 libc 段
+- [ ] 正常/攻击 trace 的窗口切分方案已与 AI 侧确认（docs/trace-window-spec.md）
 
 ## 6. 已知问题与边界
 

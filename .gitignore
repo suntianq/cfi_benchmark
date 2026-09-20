@@ -10,6 +10,8 @@
 *.elf
 *.out
 *.bin
+# 例外：exploits/ 下的小型确定性 PoC 探针文件按约定入库
+!exploits/**/*.bin
 *.exe
 
 # ===== 运行时产物（EXP 验证用）=====

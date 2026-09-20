@@ -117,8 +117,9 @@ cfi-benchmark/
 - [x] 候选目标软件源码就位（`sources/`）
 - [x] Phase 1：TC-001 全流程（构建 → 栈溢出注入 → EXP → getshell 验证 → 标签），见 `docs/phase1-tcpdump-tc001.md`
 - [x] Phase 1：TC-002 全流程（同目标堆 UAF 注入 → 间接调用劫持 → getshell），见 `docs/phase1-tcpdump-tc002.md`
+- [x] Phase 1：第二目标试点 vim（TC-003 全流程，模板跨目标复用验证），见 `docs/phase1-vim-tc001.md`
 - [x] 采集侧交接说明（`docs/handoff-capture-side.md`）+ 采集会话自动化（`tools/capture_session.py`）+ 窗口/标签规范 v1（`docs/trace-window-spec.md`）
 - [ ] Phase 1：采集侧联调（同哈希 ELF + setarch -R 采集正常/攻击 trace，验证攻击窗口标注）
-- [ ] Phase 1：第三类漏洞或第二目标（vim/nginx）
+- [ ] Phase 1：更多目标（nginx 多进程 / openssh）/ 真实历史 CVE 预研
 - [ ] Phase 2：真实 CVE 扩充
 - [ ] Phase 3：规模化流水线

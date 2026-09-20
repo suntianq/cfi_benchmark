@@ -31,7 +31,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 OUT_ROOT = REPO_ROOT / "build/capture-sessions"
 VENV_PY_DEFAULT = "/home/stq/venvs/cfi_bench/bin/python"
-NORMAL_CORPUS = REPO_ROOT / "build/normal-corpus/tcpdump-tc001"
+NORMAL_CORPUS_TCPDUMP = REPO_ROOT / "build/normal-corpus/tcpdump-tc001"
+NORMAL_CORPUS_VIM = REPO_ROOT / "build/normal-corpus/vim-tc001"
 
 SAMPLES = {
     "tc001": {
@@ -40,6 +41,13 @@ SAMPLES = {
         "exp": REPO_ROOT / "exploits/tcpdump/exp_tcpdump.py",
         "exp_args": ["--offset", "136", "--mode", "cmd", "--cmd", "id"],
         "pcap_product": REPO_ROOT / "build/tcpdump-cfi-bench/out/poc_rop.pcap",
+        "corpus": NORMAL_CORPUS_TCPDUMP,
+        "corpus_glob": "*.pcap",
+        "corpus_generator": ["tools/gen_normal_corpus.py",
+                             "--out", str(NORMAL_CORPUS_TCPDUMP),
+                             "--files", "20", "--packets", "50", "--seed", "42"],
+        "normal_argv": lambda elf, f: ["setarch", "-R", str(elf), "-nn", "-r", str(f)],
+        "normal_env": {},
     },
     "tc002": {
         "elf": REPO_ROOT / "build/tcpdump-cfi-bench/out/tcpdump-tc002",
@@ -47,6 +55,29 @@ SAMPLES = {
         "exp": REPO_ROOT / "exploits/tcpdump/exp_tcpdump_tc002.py",
         "exp_args": ["--mode", "cmd", "--cmd", "id"],
         "pcap_product": REPO_ROOT / "build/tcpdump-cfi-bench/out/poc_uaf.pcap",
+        "corpus": NORMAL_CORPUS_TCPDUMP,
+        "corpus_glob": "*.pcap",
+        "corpus_generator": ["tools/gen_normal_corpus.py",
+                             "--out", str(NORMAL_CORPUS_TCPDUMP),
+                             "--files", "20", "--packets", "50", "--seed", "42"],
+        "normal_argv": lambda elf, f: ["setarch", "-R", str(elf), "-nn", "-r", str(f)],
+        "normal_env": {},
+    },
+    "vim_tc001": {
+        "elf": REPO_ROOT / "build/vim-cfi-bench/out/vim-tc001",
+        "labels": REPO_ROOT / "labels/vim-tc001.json",
+        "exp": REPO_ROOT / "exploits/vim/exp_vim_tc001.py",
+        "exp_args": ["--mode", "cmd", "--cmd", "id"],
+        "pcap_product": REPO_ROOT / "build/vim-cfi-bench/out/poc_uaf_file.bin",
+        "corpus": NORMAL_CORPUS_VIM,
+        "corpus_glob": "*.txt",
+        "corpus_generator": ["tools/gen_normal_corpus_vim.py",
+                             "--out", str(NORMAL_CORPUS_VIM),
+                             "--files", "20", "--seed", "42"],
+        "normal_argv": lambda elf, f: [
+            "setarch", "-R", str(elf),
+            "-es", "-N", "-u", "NONE", "-i", "NONE", "-c", "qall!", str(f)],
+        "normal_env": {"VIMRUNTIME": str(REPO_ROOT / "build/vim-cfi-bench/vim-src/runtime")},
     },
 }
 
@@ -95,36 +126,42 @@ def preflight(venv_py: str, results: list) -> bool:
 
 
 def ensure_corpus(results: list) -> bool:
-    if NORMAL_CORPUS.exists() and len(list(NORMAL_CORPUS.glob("*.pcap"))) >= 20:
-        results.append({"check": "normal-corpus", "pass": True,
-                        "detail": str(NORMAL_CORPUS)})
-        return True
-    r = run([sys.executable, str(REPO_ROOT / "tools/gen_normal_corpus.py"),
-             "--out", str(NORMAL_CORPUS), "--files", "20", "--packets", "50",
-             "--seed", "42"])
-    ok = r.returncode == 0 and len(list(NORMAL_CORPUS.glob("*.pcap"))) == 20
-    results.append({"check": "normal-corpus-generated", "pass": ok,
-                    "detail": str(NORMAL_CORPUS)})
+    ok = True
+    for name, cfg in SAMPLES.items():
+        corpus = cfg["corpus"]
+        glob = cfg["corpus_glob"]
+        if corpus.exists() and len(list(corpus.glob(glob))) >= 20:
+            results.append({"check": f"normal-corpus/{name}", "pass": True,
+                            "detail": str(corpus)})
+            continue
+        r = run([sys.executable, str(REPO_ROOT / cfg["corpus_generator"][0])]
+                + cfg["corpus_generator"][1:])
+        gen_ok = r.returncode == 0 and len(list(corpus.glob(glob))) >= 20
+        results.append({"check": f"normal-corpus-generated/{name}", "pass": gen_ok,
+                        "detail": str(corpus)})
+        ok &= gen_ok
     return ok
 
 
-def run_normal(elf: Path, repeats: int, results: list, runs: list) -> bool:
+def run_normal(name: str, repeats: int, results: list, runs: list) -> bool:
+    cfg = SAMPLES[name]
     ok = True
-    for pcap in sorted(NORMAL_CORPUS.glob("*.pcap")):
+    for f in sorted(cfg["corpus"].glob(cfg["corpus_glob"])):
         for rep in range(1, repeats + 1):
-            r = run(["setarch", "-R", str(elf), "-nn", "-r", str(pcap)])
+            argv = cfg["normal_argv"](cfg["elf"], f)
+            r = run(argv, env={**os.environ, **cfg["normal_env"]})
             clean = r.returncode == 0 and "cfi-bench" not in r.stdout \
                 and "Segmentation fault" not in r.stderr
             entry = {
-                "check": f"normal/{pcap.name}/run{rep}",
+                "check": f"normal/{name}/{f.name}/run{rep}",
                 "pass": clean,
                 "detail": f"rc={r.returncode}",
             }
             results.append(entry)
             runs.append({
-                "kind": "normal", "sample": "-", "pcap": pcap.name,
-                "pcap_sha256": sha256(pcap),
-                "argv": ["setarch", "-R", str(elf), "-nn", "-r", str(pcap)],
+                "kind": "normal", "sample": name, "input": f.name,
+                "input_sha256": sha256(f),
+                "argv": argv, "env": cfg["normal_env"],
                 "exit_code": r.returncode, "markers": [], "clean": clean,
             })
             ok &= clean
@@ -146,7 +183,7 @@ def run_attack(name: str, venv_py: str, results: list, runs: list) -> bool:
     results.append(entry)
     runs.append({
         "kind": "attack", "sample": name,
-        "pcap": cfg["pcap_product"].name, "pcap_sha256": pcap_hash,
+        "poc": cfg["pcap_product"].name, "poc_sha256": pcap_hash,
         "argv": [venv_py, str(cfg["exp"])] + cfg["exp_args"],
         "exit_code": r.returncode, "markers": markers, "clean": success,
     })
@@ -156,18 +193,18 @@ def run_attack(name: str, venv_py: str, results: list, runs: list) -> bool:
 def replay_commands(venv_py: str) -> list[dict]:
     """采集侧在其 tracer 下逐条 replay 的命令清单"""
     cmds = []
-    for pcap in sorted(NORMAL_CORPUS.glob("*.pcap")):
-        for name in ("tc001", "tc002"):
+    for name, cfg in SAMPLES.items():
+        for f in sorted(cfg["corpus"].glob(cfg["corpus_glob"])):
             cmds.append({
-                "purpose": f"normal-trace/{name}/{pcap.name}",
-                "argv": ["setarch", "-R", str(SAMPLES[name]["elf"]),
-                         "-nn", "-r", str(pcap)],
+                "purpose": f"normal-trace/{name}/{f.name}",
+                "argv": cfg["normal_argv"](cfg["elf"], f),
+                "env": cfg["normal_env"],
             })
     for name, cfg in SAMPLES.items():
         cmds.append({
             "purpose": f"attack-trace/{name}",
             "argv": [venv_py, str(cfg["exp"])] + cfg["exp_args"],
-            "note": "EXP 在采集机重跑以重新生成内嵌 libc 地址的 PoC，禁止跨机拷贝 pcap",
+            "note": "EXP 在采集机重跑以重新生成内嵌 libc 地址的 PoC，禁止跨机拷贝 PoC 文件",
         })
     return cmds
 
@@ -201,8 +238,8 @@ def main() -> int:
 
     print("== 正常 workload ==")
     if not args.skip_normal:
-        ok &= run_normal(SAMPLES["tc001"]["elf"], args.normal_repeats,
-                         results, runs)
+        for name in SAMPLES:
+            ok &= run_normal(name, args.normal_repeats, results, runs)
 
     print("== 攻击 workload ==")
     if not args.skip_attack:

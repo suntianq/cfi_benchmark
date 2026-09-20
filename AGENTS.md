@@ -25,4 +25,4 @@
 
 ## 当前阶段
 
-Phase 1（最小闭环）：TC-001（栈溢出/非法 RET）与 TC-002（堆 UAF/非法间接 CALL）已跑通 构建 → 漏洞注入 → EXP 构造与本地验证 → 标签 全流程（见 docs/phase1-tcpdump-tc00*.md 与 docs/handoff-capture-side.md）。下一步：采集侧联调，再扩展第三类漏洞/其他目标、真实 CVE。
+Phase 1：tcpdump TC-001（栈溢出/非法 RET）、TC-002（堆 UAF/非法间接 CALL）与 vim TC-001（第二目标试点）已跑通 构建 → 漏洞注入 → EXP 构造与本地验证 → 标签 全流程（见 docs/phase1-*.md 与 docs/handoff-capture-side.md）。下一步：采集侧联调，再扩展 nginx/openssh 目标与真实 CVE。

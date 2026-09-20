@@ -1,0 +1,76 @@
+{
+  "sample_id": "vim-TC001",
+  "label_version": 1,
+  "date": "2026-09-20",
+  "status": "verified",
+  "target": {
+    "software": "vim",
+    "upstream": "https://github.com/vim/vim.git",
+    "commit": "4b3e2e3db0a4926622da59ef6301ff79c99fff30",
+    "version_str": "9.2.1119 (patch level)",
+    "build_script": "targets/vim/build.sh",
+    "patch": [
+      "patches/vim/0001-cfi-bench-tc001-fileio-heap-uaf.patch"
+    ],
+    "elf": {
+      "build_path": "build/vim-cfi-bench/out/vim-tc001",
+      "sha256": "3b872d5abc194a08b0dadc8db065439130ae24a99a2b1a907258fdccf9b52d19",
+      "reproducible": true,
+      "reproducibility_note": "vim 将编译时间嵌入 version.c（__DATE__/__TIME__），构建脚本以 SOURCE_DATE_EPOCH=pinned commit 提交时间固定"
+    },
+    "mitigations": {
+      "pie": false,
+      "canary": false,
+      "fortify_source": "level-1（vim configure 在自定义 CFLAGS 之后强制追加 -D_FORTIFY_SOURCE=1，无法经环境变量关闭；对本样本无影响——memcpy 大小不超过对象大小，无 OOB）",
+      "nx": true,
+      "relro": "full"
+    },
+    "toolchain": {
+      "gcc": "13.3.0 (Ubuntu 13.3.0-6ubuntu2~24.04.1)",
+      "glibc": "2.39-0ubuntu8.9",
+      "os": "Ubuntu 24.04.1 (WSL2, kernel 6.18.33.2-microsoft-standard-WSL2)"
+    }
+  },
+  "vulnerability": {
+    "type": "heap use-after-free, indirect call hijack (synthetic, injected)",
+    "cwe": "CWE-416",
+    "location": "src/fileio.c: cfiv_uaf_probe()/cfiv_uaf_trigger()，触发点在 readfile() 主体开始处",
+    "trigger": {
+      "condition": "文件前 9 字节为 magic \"CFIVIMBEN\"（仅此条件触发，正常文件不受影响）",
+      "file_layout": "file[0:9]=magic, file[9:11]=dlen(BE16), file[11:]=对象重建数据(整体填充 obj, dlen 上限 0x58)",
+      "uaf_sequence": "alloc(0x58) 置回调 → vim_free(指针未置空) → 同尺寸 alloc（tcache LIFO 复用同块）→ mch_memmove 文件数据 → 悬空指针间接调用 obj->fn(obj->buf)"
+    },
+    "primitive": "RIP 完全受控的间接 CALL（rdi=obj->buf=攻击者字符串），与 tcpdump TC-002 同构"
+  },
+  "exploit": {
+    "files": [
+      "exploits/vim/exp_vim_tc001.py",
+      "exploits/vim/gen_input.py",
+      "exploits/vim/poc_hijack_probe.bin"
+    ],
+    "technique": "无 ROP 链：fn 覆写为 libc system，buf 为参数字符串（/bin/sh 或 <cmd>）",
+    "success_criteria": "getshell；--mode shell 交互 / --mode cmd 非交互（命令输出 + CFI_DONE_exit=0）",
+    "requirements": "pwntools==4.15.0（见 tools/requirements.txt）",
+    "final_poc_note": "poc_uaf_file.bin 由 EXP 运行时生成（内嵌 libc 地址，机器相关），不入库；入库的 poc_hijack_probe.bin 为 fn=0x1 劫持探针（确定性，预期 segfault rc=139）"
+  },
+  "runtime_env": {
+    "aslr": "per-process disabled via setarch -R（禁止用 pwntools aslr=False：其布局与 setarch -R 不一致）",
+    "user": "non-root",
+    "env": "必须设置 VIMRUNTIME=build/vim-cfi-bench/vim-src/runtime（源码树内 runtime，不依赖系统安装）",
+    "run_args": "-es -N -u NONE -i NONE -c 'qall!' <file>",
+    "libc": "/usr/lib/x86_64-linux-gnu/libc.so.6，setarch -R 下基址由 EXP 从存活进程动态解析"
+  },
+  "verification": {
+    "exploit": "--mode cmd 与 --mode shell 双模式 SUCCESS（uid 输出 / CFI_PWNED_42）",
+    "rip_control": "poc_hijack_probe.bin（fn=0x1）→ SIGSEGV rc=139",
+    "normal_corpus": "20 个正常文本文件（seed=42）全部无触发、正常退出",
+    "reproducible_build": "连续两次构建 ELF sha256 一致"
+  },
+  "capture_side_notes": {
+    "run_cmd": "VIMRUNTIME=<源码树>/runtime setarch -R vim-tc001 -es -N -u NONE -i NONE -c 'qall!' <poc>",
+    "attack_window": "readfile → [cfi-bench] uaf trigger/uaf call 标记（stderr）→ 悬空指针间接调用 → libc system → execve",
+    "markers": "stderr 出现 \"[cfi-bench] uaf trigger dlen=88\" 与 \"[cfi-bench] uaf call\" 即触发；攻击结束判据可用 execve(\"/bin/sh\") 或命令输出",
+    "elf_binding": "采集侧符号还原必须使用上表 sha256 的 ELF",
+    "aslr_note": "采集时必须使用 setarch -R（或等价 personality）关闭 ASLR 并记入 trace 元数据；不要用 pwntools aslr=False（布局不同）"
+  }
+}

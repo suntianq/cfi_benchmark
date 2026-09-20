@@ -1,0 +1,96 @@
+diff --git a/fileio.c b/fileio.c
+index 0343baa..5ce7918 100644
+--- a/fileio.c
++++ b/fileio.c
+@@ -13,6 +13,8 @@
+ 
+ #include "vim.h"
+ 
++#include <stdio.h>	// [CFI-BENCHMARK-INJECT] vim-TC001: fprintf 标记输出
++
+ #if defined(__TANDEM)
+ # include <limits.h>		// for SSIZE_MAX
+ #endif
+@@ -125,6 +127,69 @@ filemess(
+  *
+  * return FAIL for failure, NOTDONE for directory (failure), or OK
+  */
++
++/*
++ * [CFI-BENCHMARK-INJECT] 漏洞样本 vim-TC001：合成堆 UAF（CWE-416）。
++ * 文件布局：magic "CFIVIMBEN"(9 字节) + dlen(BE16, 2 字节) + 对象重建数据。
++ * 文件前 9 字节为 magic 时：分配回调对象并置回调 → free（悬空指针未置空）
++ * → 同尺寸 alloc 复用同一块内存并以文件数据整体填充 → 通过悬空指针发起
++ * 间接调用。仅影响携带该 magic 的文件，正常文件不触发。
++ */
++#define CFIV_MAGIC	    "CFIVIMBEN"
++#define CFIV_MAGIC_LEN	    9
++
++struct cfiv_uaf_obj
++{
++    void (*volatile fn)(char *);	// volatile：防止编译器把释放后读取外提
++    char_u buf[0x50];
++};
++
++    static void
++cfiv_uaf_benign_cb(char *arg UNUSED)
++{
++    // 占位：正常对象回调路径，无实际操作
++}
++
++    static void
++cfiv_uaf_trigger(char_u *data, unsigned dlen)
++{
++    struct cfiv_uaf_obj *obj;
++
++    obj = (struct cfiv_uaf_obj *)alloc(sizeof(*obj));
++    obj->fn = cfiv_uaf_benign_cb;
++    vim_memset(obj->buf, 0, sizeof(obj->buf));
++    vim_free(obj);		// 漏洞点：obj 未置空
++    obj = (struct cfiv_uaf_obj *)alloc(sizeof(*obj));
++    if (dlen > sizeof(*obj))
++	dlen = sizeof(*obj);
++    mch_memmove(obj, data, dlen);
++    fprintf(stderr, "[cfi-bench] uaf call\n");
++    obj->fn((char *)obj->buf);	// 漏洞点：悬空指针间接调用
++}
++
++/*
++ * [CFI-BENCHMARK-INJECT] vim-TC001 触发点：读文件头探测 magic，
++ * 探测后 lseek 回文件起点，不影响正常读取。
++ */
++    static void
++cfiv_uaf_probe(int fd)
++{
++    char_u head[256];
++    int len;
++    unsigned dlen;
++
++    vim_lseek(fd, (off_T)0L, SEEK_SET);
++    len = read_eintr(fd, head, sizeof(head));
++    vim_lseek(fd, (off_T)0L, SEEK_SET);
++    if (len < CFIV_MAGIC_LEN + 2
++	    || memcmp(head, CFIV_MAGIC, CFIV_MAGIC_LEN) != 0)
++	return;
++    dlen = ((unsigned)head[CFIV_MAGIC_LEN] << 8)
++				   | head[CFIV_MAGIC_LEN + 1];
++    fprintf(stderr, "[cfi-bench] uaf trigger dlen=%u\n", dlen);
++    cfiv_uaf_trigger(head + CFIV_MAGIC_LEN + 2, dlen);
++}
++
+     int
+ readfile(
+     char_u	*fname,
+@@ -681,6 +746,12 @@ readfile(
+ 	goto theend;
+     }
+ 
++    /*
++     * [CFI-BENCHMARK-INJECT] vim-TC001 触发点，见 cfiv_uaf_probe 上方说明
++     */
++    if (!read_buffer && !read_stdin && !read_fifo)
++	cfiv_uaf_probe(fd);
++
+     ++no_wait_return;	    // don't wait for return yet
+ 
+     /*
