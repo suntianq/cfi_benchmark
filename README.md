@@ -47,28 +47,30 @@ cfi-benchmark/
 
 ## 4. 目标软件（sources/ 现状）
 
-当前已就位 5 个候选（均为近期 mainline 版本，未编译）：
+已就位 5 个候选（均为近期 mainline 版本）：
 
-| 软件 | 版本 | 适用性说明 |
-|---|---|---|
-| tcpdump | mainline | ⭐ 建议首选：单进程、输入为 pcap 文件、解析路径清晰、验证链路最短 |
-| vim | 9.x | 输入为文件/按键序列，历史 CVE 多（UAF 类），进程生命周期长 |
-| nginx | 1.31.7 | HTTP 解析类漏洞；master/worker 多进程，交付时需明确采集侧应追踪的进程 |
-| openssh-portable | 10.5 | sshd fork-per-connection、权限分离，进程模型复杂 |
-| FFmpeg | mainline | 解析器复杂、输入为媒体文件，fuzz 公开语料丰富但代码量最大 |
+| 软件 | 版本 | 状态 | 说明 |
+|---|---|---|---|
+| tcpdump | mainline @ 19917282 | ✅ 已交付 2 样本 | 首选试点：单进程、pcap 输入；TC-001 栈溢出/非法 RET、TC-002 堆 UAF/间接 CALL |
+| vim | 9.2.1119 @ 4b3e2e3d | ✅ 已交付 1 样本 | 第二目标试点：文件输入；TC-001 堆 UAF/间接 CALL（fortify=1 被 configure 强制开启，OOB 类原语受限） |
+| nginx | 1.31.7 | ⬜ 未开始 | HTTP 解析类；master/worker 多进程，需采集侧先验证 worker 追踪 |
+| openssh-portable | 10.5 | ⬜ 未开始 | sshd fork-per-connection、权限分离，进程模型复杂 |
+| FFmpeg | mainline | ⬜ 未开始 | 解析器复杂、代码量最大，放最后 |
 
 注意：以上均为**现代版本**，默认开启全部缓解措施，适合做"合成漏洞注入"的基线；复现历史 CVE 需在 `sources/` 中另外下载**特定旧版本**。
 
 ## 5. 实施计划
 
-### Phase 1：最小闭环（合成漏洞 + 单一目标）
+### Phase 1：最小闭环（合成漏洞）——✅ 已完成（等待采集侧端到端验证）
 
-1. 以 tcpdump 为试点，用 `-g -O1` 构建带完整符号的 ELF，固化构建脚本。
-2. 编写 1～2 个漏洞注入 patch（建议：栈溢出、格式化字符串）。
-3. 构造对应 PoC 输入，并**本地验证 EXP 可靠触发**（预期行为：crash、越界读写、错误输出等，具体见标签）。
-4. 设计正常输入集合（供采集侧采正常基线 trace 用）。
-5. 定义标签格式 v1（`labels/`），输出第一个成套样本（构建配置 + patch + PoC + 标签）。
-6. 交付给采集服务器，验证其端到端可用（构建可复现、ELF 哈希一致、攻击可复现）。
+已达成：
+
+1. tcpdump 全流程模板跑通：TC-001（栈溢出/非法 RET）、TC-002（堆 UAF/间接 CALL），`docs/phase1-tcpdump-tc001.md`、`docs/phase1-tcpdump-tc002.md`。
+2. 模板跨目标复用验证：vim TC-001（堆 UAF/间接 CALL），`docs/phase1-vim-tc001.md`。
+3. 三个样本全部通过：可重复构建（连续两次哈希一致）、EXP 双模式 getshell、正常语料 20/20 无触发、标签齐备。
+4. 采集侧开箱即跑：`tools/capture_session.py`（预检 + workload 验证 + replay 清单 manifest）、`docs/handoff-capture-side.md`、窗口/标签规范 `docs/trace-window-spec.md`。
+
+剩余：采集侧服务器按 replay 清单实际采集 trace 并回填验收清单（外部依赖）。
 
 ### Phase 2：真实 CVE 扩充
 
@@ -85,7 +87,7 @@ cfi-benchmark/
 - **EXP 默认 Python + pwntools**（版本固定于 `tools/requirements.txt`）；C 仅在必要时使用并在标签中说明理由。pwntools 的 `ELF()` 符号解析、`process(aslr=False)`、运行时 maps 解析对本项目关键。
 - EXP 统一支持 `--cmd` 非交互模式（执行固定命令后退出），供采集侧自动化；交互 shell 仅用于人工验证。
 - 成功标准默认 **getshell**（`execve("/bin/sh")` 是 trace 中最清晰的攻击窗口标记）。
-- ASLR 用 personality 按进程关闭（`aslr=False` / `setarch -R`），不做系统级设置。
+- ASLR 统一用 `setarch -R` 按进程关闭，不做系统级设置。**禁止用 pwntools 的 `aslr=False`**：实测其 no-ASLR 布局与 `setarch -R` 不一致（libc base `0x155554a00000` vs `0x7ffff7600000`），EXP 内嵌地址会失配。
 - 验证手段：dmesg 崩溃记录 + 预期行为观察（uid 输出 / marker 回显）；**避免 gdb 长会话**（WSL2 稳定性问题，见 docs/）。
 - **验证构建与交付构建分离**：ASAN/插桩只用于本地验证漏洞可达性，交付给采集侧的必须是不带插桩的最终构建。
 - 本地验证通过的 EXP 不保证在其他环境同样成立，需依赖可重复构建保证两侧二进制一致（见限制 2）。

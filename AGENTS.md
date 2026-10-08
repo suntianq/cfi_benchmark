@@ -16,12 +16,13 @@
    - `patches/`：漏洞注入 diff；
    - `exploits/`：EXP 或 PoC 输入文件；
    - `labels/`：元数据（样本 ID、漏洞类型、触发输入说明、预期攻击行为、缓解配置、ELF 哈希）。
-5. 构建脚本需保证可重复构建（采集侧依赖同哈希 ELF 做符号还原）；交付前核对 ELF 哈希并记入 `labels/`。
-6. **验证构建与交付构建分离**：ASAN/插桩构建只用于本地验证 EXP，交付给采集侧的必须是不带插桩的最终构建。
-7. EXP 默认 Python + pwntools（版本固定于 `tools/requirements.txt`），统一支持 `--cmd` 非交互模式；成功标准默认 getshell。ASLR 用 personality 按进程关闭，不做系统级设置。
-8. 本机 WSL2 调试限制：避免 gdb 长会话（vsock relay 会卡死会话）；core 不落盘（`core_pattern` 为管道），崩溃信息从 dmesg 获取（有 ~2s 延迟）；详见 `docs/phase1-tcpdump-tc001.md` 第 4 节。
-9. 安装系统级依赖（apt、工具链、全局配置）先征得用户同意，避免破坏可重复构建的环境假设。
-10. 文档与说明用中文；代码标识符与提交信息用英文。
+5. 新增/修改样本时必须同步更新：`tools/capture_session.py` 的 SAMPLES 条目、`docs/handoff-capture-side.md` 交付物表；可重复构建以"连续两次构建 ELF 哈希一致"为验收标准（vim 的 __DATE__/__TIME__ 教训，用 SOURCE_DATE_EPOCH 修复）。
+6. 构建脚本需保证可重复构建（采集侧依赖同哈希 ELF 做符号还原）；交付前核对 ELF 哈希并记入 `labels/`。
+7. **验证构建与交付构建分离**：ASAN/插桩构建只用于本地验证 EXP，交付给采集侧的必须是不带插桩的最终构建。
+8. EXP 默认 Python + pwntools（版本固定于 `tools/requirements.txt`），统一支持 `--cmd` 非交互模式；成功标准默认 getshell。ASLR 统一 `setarch -R` 按进程关闭（禁用 pwntools `aslr=False`，布局不一致），不做系统级设置。
+9. 本机 WSL2 调试限制：避免 gdb 长会话（vsock relay 会卡死会话）；core 不落盘（`core_pattern` 为管道），崩溃信息从 dmesg 获取（有 ~2s 延迟）；详见 `docs/phase1-tcpdump-tc001.md` 第 4 节。
+10. 安装系统级依赖（apt、工具链、全局配置）先征得用户同意，避免破坏可重复构建的环境假设。
+11. 文档与说明用中文；代码标识符与提交信息用英文。
 
 ## 当前阶段
 
